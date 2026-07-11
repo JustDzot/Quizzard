@@ -18,18 +18,27 @@ class TelegramLoggingHandler(logging.Handler):
         self.chat_id = chat_id
 
     def emit(self, record):
+        # Игнорируем логи сторонних библиотек, чтобы избежать спама и бесконечных циклов
+        if record.name.startswith(("aiogram", "httpx", "openai", "asyncio", "urllib3", "sqlalchemy")):
+            return
+            
         try:
             log_entry = self.format(record)
-            # Limit message length to avoid Telegram character limit issues
+            # Ограничиваем длину сообщения, чтобы не превысить лимиты Telegram
             if len(log_entry) > 3500:
                 log_entry = log_entry[:3500] + "\n...[TRUNCATED]..."
             
+            # Экранируем HTML-символы, чтобы избежать ошибок парсинга на серверах Telegram
+            import html as py_html
+            escaped_entry = py_html.escape(log_entry)
+            
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                # Schedule message sending in the active asyncio event loop
+                # Отправляем лог асинхронно
                 loop.create_task(self.bot.send_message(
                     chat_id=self.chat_id,
-                    text=f"📋 <b>Лог бота:</b>\n<pre>{log_entry}</pre>"
+                    text=f"📋 <b>Лог бота:</b>\n<pre>{escaped_entry}</pre>",
+                    parse_mode=ParseMode.HTML
                 ))
         except Exception:
             pass
@@ -55,6 +64,7 @@ async def main() -> None:
     
     logger = logging.getLogger(__name__)
     logger.info("Starting Quizzard bot...")
+    logger.info(f"Logging configuration: LOG_FILE={settings.log_file}, LOGS_BOT_TOKEN_SET={bool(settings.logs_bot_token)}, ADMIN_CHAT_ID={settings.admin_chat_id}")
 
     # Инициализация основного бота и диспетчера
     bot = Bot(
@@ -66,12 +76,15 @@ async def main() -> None:
     # Подключение логгера для Telegram через отдельного бота (пишет всё от уровня INFO и выше)
     logs_bot = None
     if settings.logs_bot_token and settings.admin_chat_id:
-        logs_bot = Bot(token=settings.logs_bot_token)
+        logs_bot = Bot(
+            token=settings.logs_bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
         tg_handler = TelegramLoggingHandler(logs_bot, settings.admin_chat_id)
-        tg_handler.setLevel(logging.INFO)  # Пересылает все логи (INFO, WARNING, ERROR)
+        tg_handler.setLevel(logging.INFO)  # Пересылает все логи уровня INFO и выше
         tg_handler.setFormatter(formatter)
         root_logger.addHandler(tg_handler)
-        logger.info(f"Telegram logs bot initialized for admin chat: {settings.admin_chat_id}")
+        logger.info(f"Telegram logs bot handler added for admin chat: {settings.admin_chat_id}")
 
     # Подключение Middleware для инъекции сессии БД
     dp.update.outer_middleware(DbSessionMiddleware(async_session))
