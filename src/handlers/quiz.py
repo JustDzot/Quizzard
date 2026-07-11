@@ -1,4 +1,5 @@
 import logging
+import time
 from aiogram import Router, html, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
@@ -36,9 +37,28 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
         "Использую искусственный интеллект. Это может занять около 5-10 секунд. ⏳"
     )
 
+    last_update_time = 0.0
+
+    async def on_chunk(accumulated_text: str):
+        nonlocal last_update_time
+        current_time = time.time()
+        # Update no more than once per 1.5 seconds to respect Telegram rate limits
+        if current_time - last_update_time >= 1.5:
+            last_update_time = current_time
+            trimmed = accumulated_text[-2500:]  # Keep it within message length limit
+            preview_text = (
+                f"🤖 Генерирую викторину по теме: {html.bold(topic)}...\n\n"
+                f"⏳ {html.bold('Потоковый вывод от ИИ:')}\n"
+                f"{html.pre(trimmed)}"
+            )
+            try:
+                await status_msg.edit_text(preview_text)
+            except Exception:
+                pass
+
     # Initialize service and generate
     quiz_service = QuizService(db_session)
-    session = await quiz_service.start_quiz_session(message.from_user.id, topic, count=5)
+    session = await quiz_service.start_quiz_session(message.from_user.id, topic, count=5, on_chunk=on_chunk)
 
     if not session:
         await status_msg.edit_text(
@@ -69,21 +89,29 @@ async def send_current_question(message: Message, session_id: int, db_session: A
         await message.answer("Произошла ошибка при загрузке вопроса.")
         return
 
-    # Create options keyboard
-    builder = InlineKeyboardBuilder()
+    # Create options text
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    options_lines = []
     for idx, option in enumerate(question.options):
-        # We can add emojis to option choices: 1️⃣, 2️⃣, 3️⃣, 4️⃣
-        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
         prefix = emojis[idx] if idx < len(emojis) else f"{idx+1}."
-        builder.row(InlineKeyboardButton(text=f"{prefix} {option}", callback_data=f"quiz_ans:{question.id}:{idx}"))
+        options_lines.append(f"{prefix} {option}")
+    options_text = "\n".join(options_lines)
 
+    # Create simple numeric buttons row
+    builder = InlineKeyboardBuilder()
+    row_buttons = []
+    for idx in range(len(question.options)):
+        btn_text = emojis[idx] if idx < len(emojis) else f"{idx+1}"
+        row_buttons.append(InlineKeyboardButton(text=btn_text, callback_data=f"quiz_ans:{question.id}:{idx}"))
+    builder.row(*row_buttons)
     builder.row(InlineKeyboardButton(text="❌ Прервать викторину", callback_data="quiz_cancel"))
 
     quiz_progress = f"Вопрос {session.current_question_index + 1} из {session.total_questions}"
     question_text = (
         f"📋 Тема: {html.code(session.topic)}\n"
         f"📊 Прогресс: {html.bold(quiz_progress)}\n\n"
-        f"❓ {html.bold(question.question_text)}"
+        f"❓ {html.bold(question.question_text)}\n\n"
+        f"{options_text}"
     )
 
     await message.answer(question_text, reply_markup=builder.as_markup())
@@ -111,18 +139,26 @@ async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_
     is_correct, question = res
     session = await quiz_service.repo.get_session_by_id(session_id)
 
-    # Prepare feedback message
-    user_choice = question.options[option_idx]
-    correct_choice = question.options[question.correct_option_index]
+    # Format options text indicating user choice and correct answer
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    options_lines = []
+    for idx, option in enumerate(question.options):
+        line = f"{emojis[idx]} {option}"
+        if idx == option_idx and idx == question.correct_option_index:
+            line += f" {html.bold('(Верно! ✅)')}"
+        elif idx == option_idx:
+            line += f" {html.bold('(Твой ответ ❌)')}"
+        elif idx == question.correct_option_index:
+            line += f" {html.bold('(Правильный ответ ✅)')}"
+        options_lines.append(line)
+    options_text = "\n".join(options_lines)
 
+    # Prepare feedback message
+    feedback = ""
     if is_correct:
-        feedback = f"✅ {html.bold('Верно!')}\n"
+        feedback += f"✅ {html.bold('Верно!')}\n"
     else:
-        feedback = (
-            f"❌ {html.bold('Неверно!')}\n"
-            f"Твой ответ: {html.italic(user_choice)}\n"
-            f"Правильный ответ: {html.bold(correct_choice)}\n"
-        )
+        feedback += f"❌ {html.bold('Неверно!')}\n"
 
     if question.explanation:
         feedback += f"\n💡 {html.bold('Объяснение:')}\n{question.explanation}"
@@ -140,6 +176,7 @@ async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_
     question_context = (
         f"📋 Тема: {html.code(session.topic)}\n"
         f"❓ {html.bold(question.question_text)}\n\n"
+        f"{options_text}\n\n"
         f"{feedback}"
     )
 

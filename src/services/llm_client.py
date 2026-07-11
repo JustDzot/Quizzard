@@ -13,7 +13,12 @@ class LLMClient:
         )
         self.model = settings.llm_model
 
-    async def generate_questions(self, topic: str, count: int = 5) -> list[dict] | None:
+    async def generate_questions(
+        self,
+        topic: str,
+        count: int = 5,
+        on_chunk = None
+    ) -> list[dict] | None:
         """
         Generates structured questions on a topic in JSON format.
         Each question has:
@@ -37,15 +42,32 @@ class LLMClient:
         user_prompt = f"Generate {count} questions for the topic: \"{topic}\"."
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-            )
-            content = response.choices[0].message.content.strip()
+            if on_chunk:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                    stream=True
+                )
+                collected_chunks = []
+                async for chunk in response:
+                    chunk_text = chunk.choices[0].delta.content or ""
+                    collected_chunks.append(chunk_text)
+                    await on_chunk("".join(collected_chunks))
+                content = "".join(collected_chunks).strip()
+            else:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.7,
+                )
+                content = response.choices[0].message.content.strip()
             
             # Clean possible markdown wrapping
             if content.startswith("```json"):

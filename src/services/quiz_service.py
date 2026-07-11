@@ -8,14 +8,14 @@ class QuizService:
         self.repo = QuizRepository(db_session)
         self.llm_client = LLMClient()
 
-    async def start_quiz_session(self, user_id: int, topic: str, count: int = 5) -> QuizSession | None:
+    async def start_quiz_session(self, user_id: int, topic: str, count: int = 5, on_chunk = None) -> QuizSession | None:
         # Mark any previous active session as completed before starting a new one
         active = await self.repo.get_active_session(user_id)
         if active:
             await self.repo.update_session(active.id, active.current_question_index, active.score, is_completed=True)
 
         # Generate questions using LLM
-        questions_data = await self.llm_client.generate_questions(topic, count)
+        questions_data = await self.llm_client.generate_questions(topic, count, on_chunk=on_chunk)
         if not questions_data:
             return None
 
