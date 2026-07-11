@@ -71,7 +71,7 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
     # Send status message
     status_msg = await message.answer(
         f"🤖 Генерирую викторину по теме: {html.bold(topic)} ({diff_label})...\n"
-        "Использую искусственный интеллект. Это может занять около 5-10 секунд. ⏳"
+        "Использую искусственный интеллект. Это может занять некоторое время. ⏳"
     )
 
     last_update_time = 0.0
