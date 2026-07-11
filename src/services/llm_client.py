@@ -73,11 +73,38 @@ class LLMClient:
                             stream=True
                         )
                         collected_chunks = []
-                        async for chunk in response:
-                            chunk_text = chunk.choices[0].delta.content or ""
-                            collected_chunks.append(chunk_text)
-                            await on_chunk("".join(collected_chunks))
-                        content = "".join(collected_chunks).strip()
+                        current_text = ""
+
+                        async def telegram_updater():
+                            last_sent_text = ""
+                            while True:
+                                try:
+                                    await asyncio.sleep(1.5)
+                                    if current_text == last_sent_text:
+                                        continue
+                                    last_sent_text = current_text
+                                    if last_sent_text:
+                                        await on_chunk(last_sent_text)
+                                except asyncio.CancelledError:
+                                    if current_text != last_sent_text:
+                                        try:
+                                            await on_chunk(current_text)
+                                        except Exception:
+                                            pass
+                                    break
+                                except Exception:
+                                    pass
+
+                        updater_task = asyncio.create_task(telegram_updater())
+                        try:
+                            async for chunk in response:
+                                chunk_text = chunk.choices[0].delta.content or ""
+                                collected_chunks.append(chunk_text)
+                                current_text = "".join(collected_chunks)
+                        finally:
+                            updater_task.cancel()
+                            await asyncio.gather(updater_task, return_exceptions=True)
+                        content = current_text.strip()
                     else:
                         response = await self.client.chat.completions.create(
                             model=self.model,
