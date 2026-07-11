@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     llm_model: str = "moonshotai/kimi-k2.6"
     log_level: str = "INFO"
+    
+    admin_chat_id: int | None = None
+    log_file: str = "bot_logs.txt"
 
     model_config = SettingsConfigDict(
         env_file=".env",

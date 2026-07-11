@@ -85,6 +85,8 @@ cp .env.example .env
 | `GONKAGATE_API_KEY` | Токен/ключ авторизации в API LLM | `gp-your-key-here` |
 | `LLM_MODEL` | Название используемой языковой модели | `qwen/qwen3-235b-a22b-instruct-2507-fp8` |
 | `LOG_LEVEL` | Уровень логирования проекта (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
+| `ADMIN_CHAT_ID` | (Опционально) Telegram ID админа для получения сообщений о WARNING/ERROR | `123456789` |
+| `LOG_FILE` | (Опционально) Имя файла для сохранения логов бота | `bot_logs.txt` |
 
 ---
 
