@@ -1,6 +1,7 @@
+import asyncio
 import json
 import logging
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -48,34 +49,53 @@ class LLMClient:
         diff_desc = diff_prompts.get(difficulty, "средний уровень сложности")
         user_prompt = f"Generate {count} questions for the topic: \"{topic}\". Уровень сложности вопросов: {diff_desc}."
 
+        max_retries = 3
+        retry_delay = 5.0
+        content = ""
+
+        for attempt in range(max_retries):
+            try:
+                if on_chunk:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                        stream=True
+                    )
+                    collected_chunks = []
+                    async for chunk in response:
+                        chunk_text = chunk.choices[0].delta.content or ""
+                        collected_chunks.append(chunk_text)
+                        await on_chunk("".join(collected_chunks))
+                    content = "".join(collected_chunks).strip()
+                else:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.7,
+                    )
+                    content = response.choices[0].message.content.strip()
+                
+                break  # Success, exit retry loop
+                
+            except RateLimitError as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Rate limit exceeded on final attempt: {e}")
+                    return None
+                logger.warning(f"Rate limit exceeded (429). Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2.0
+            except Exception as e:
+                logger.error(f"Error calling LLM API: {e}")
+                return None
+
         try:
-            if on_chunk:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.7,
-                    stream=True
-                )
-                collected_chunks = []
-                async for chunk in response:
-                    chunk_text = chunk.choices[0].delta.content or ""
-                    collected_chunks.append(chunk_text)
-                    await on_chunk("".join(collected_chunks))
-                content = "".join(collected_chunks).strip()
-            else:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.7,
-                )
-                content = response.choices[0].message.content.strip()
-            
             # Clean possible markdown wrapping
             if content.startswith("```json"):
                 content = content[7:]
@@ -110,5 +130,5 @@ class LLMClient:
             return validated_questions
             
         except Exception as e:
-            logger.error(f"Error generating questions from LLM: {e}")
+            logger.error(f"Error parsing questions from LLM response: {e}")
             return None

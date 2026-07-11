@@ -1,12 +1,18 @@
 from aiogram import Router, html, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories import QuizRepository
 
 router = Router()
 
-async def get_stats_message(user_id: int, first_name: str, db_session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🎯 Начать викторину")],
+        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="ℹ️ О боте")]
+    ], resize_keyboard=True)
+
+async def get_stats_message(user_id: int, first_name: str, db_session: AsyncSession) -> str:
     repo = QuizRepository(db_session)
     stats = await repo.get_user_stats(user_id)
     
@@ -23,21 +29,10 @@ async def get_stats_message(user_id: int, first_name: str, db_session: AsyncSess
             f"✅ Всего правильных ответов: {html.bold(stats['total_score'])} / {stats['total_questions']}\n"
             f"🎯 Процент правильных ответов: {html.bold(f'{correct_rate}%')}"
         )
-        
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎯 Начать викторину", callback_data="start_quiz")],
-        [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_menu")]
-    ])
-    
-    return text, kb
+    return text
 
 @router.message(Command("stats"))
-async def command_stats_handler(message: Message, db_session: AsyncSession) -> None:
-    text, kb = await get_stats_message(message.from_user.id, message.from_user.first_name, db_session)
-    await message.answer(text, reply_markup=kb)
-
-@router.callback_query(F.data == "show_stats")
-async def callback_stats_handler(callback: CallbackQuery, db_session: AsyncSession) -> None:
-    text, kb = await get_stats_message(callback.from_user.id, callback.from_user.first_name, db_session)
-    await callback.message.edit_text(text, reply_markup=kb)
-    await callback.answer()
+@router.message(F.text == "📊 Моя статистика")
+async def stats_handler(message: Message, db_session: AsyncSession) -> None:
+    text = await get_stats_message(message.from_user.id, message.from_user.first_name, db_session)
+    await message.answer(text, reply_markup=get_main_keyboard())

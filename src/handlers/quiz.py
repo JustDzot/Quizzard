@@ -2,8 +2,7 @@ import logging
 import time
 from aiogram import Router, html, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.states.quiz_states import QuizStates
@@ -12,47 +11,84 @@ from src.services.quiz_service import QuizService
 logger = logging.getLogger(__name__)
 router = Router()
 
-@router.callback_query(F.data == "start_quiz")
-async def start_quiz_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(QuizStates.waiting_for_difficulty)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🟢 Легкая", callback_data="difficulty:easy"),
-            InlineKeyboardButton(text="🟡 Средняя", callback_data="difficulty:medium"),
-            InlineKeyboardButton(text="🔴 Сложная", callback_data="difficulty:hard")
-        ],
-        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_menu")]
-    ])
-    await callback.message.edit_text(
-        "🎮 Выбери уровень сложности викторины:",
-        reply_markup=kb
-    )
-    await callback.answer()
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="🎯 Начать викторину")],
+        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="ℹ️ О боте")]
+    ], resize_keyboard=True)
 
-@router.callback_query(QuizStates.waiting_for_difficulty, F.data.startswith("difficulty:"))
-async def handle_difficulty_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    difficulty = callback.data.split(":")[1]
+def get_difficulty_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [
+            KeyboardButton(text="🟢 Легкая"),
+            KeyboardButton(text="🟡 Средняя"),
+            KeyboardButton(text="🔴 Сложная")
+        ],
+        [KeyboardButton(text="⬅️ Отмена")]
+    ], resize_keyboard=True)
+
+def get_cancel_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="⬅️ Отмена")]
+    ], resize_keyboard=True)
+
+def get_quiz_options_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [
+            KeyboardButton(text="A"),
+            KeyboardButton(text="B"),
+            KeyboardButton(text="C"),
+            KeyboardButton(text="D")
+        ],
+        [KeyboardButton(text="❌ Прервать викторину")]
+    ], resize_keyboard=True)
+
+def get_next_question_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="➡️ Следующий вопрос")],
+        [KeyboardButton(text="❌ Прервать викторину")]
+    ], resize_keyboard=True)
+
+def get_finish_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📊 Показать результаты")],
+        [KeyboardButton(text="❌ Прервать викторину")]
+    ], resize_keyboard=True)
+
+@router.message(F.text == "🎯 Начать викторину")
+async def start_quiz_message_handler(message: Message, state: FSMContext) -> None:
+    await state.set_state(QuizStates.waiting_for_difficulty)
+    await message.answer(
+        "🎮 Выбери уровень сложности викторины:",
+        reply_markup=get_difficulty_keyboard()
+    )
+
+@router.message(QuizStates.waiting_for_difficulty, F.text.in_({"🟢 Легкая", "🟡 Средняя", "🔴 Сложная"}))
+async def difficulty_received_handler(message: Message, state: FSMContext) -> None:
+    text = message.text
+    mapping = {
+        "🟢 Легкая": "easy",
+        "🟡 Средняя": "medium",
+        "🔴 Сложная": "hard"
+    }
+    difficulty = mapping.get(text, "medium")
     await state.update_data(difficulty=difficulty)
     await state.set_state(QuizStates.waiting_for_topic)
     
-    diff_titles = {
-        "easy": "Легкая 🟢",
-        "medium": "Средняя 🟡",
-        "hard": "Сложная 🔴"
-    }
-    
-    await callback.message.edit_text(
-        f"Выбранная сложность: {html.bold(diff_titles[difficulty])}\n\n"
+    await message.answer(
+        f"Выбранная сложность: {html.bold(text)}\n\n"
         "📝 Теперь напиши тему, по которой ты хочешь пройти викторину.\n"
         "Например: 'Язык программирования Python', 'История Древнего Рима', 'Вселенная Гарри Поттера' или 'Основы кулинарии'.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_menu")]
-        ])
+        reply_markup=get_cancel_keyboard()
     )
-    await callback.answer()
 
 @router.message(QuizStates.waiting_for_topic)
 async def topic_received_handler(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
+    if message.text == "⬅️ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=get_main_keyboard())
+        return
+
     topic = message.text.strip()
     if len(topic) < 2:
         await message.answer("Тема слишком короткая. Напиши что-нибудь более конкретное.")
@@ -117,19 +153,14 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
     )
 
     if not session:
-        await status_msg.edit_text(
+        await message.answer(
             "❌ Не удалось сгенерировать викторину. \n"
             "Возможно, тема некорректна или возникли проблемы с API. Попробуй другую тему.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🎯 Попробовать снова", callback_data="start_quiz")],
-                [InlineKeyboardButton(text="⬅️ В меню", callback_data="back_to_menu")]
-            ])
+            reply_markup=get_main_keyboard()
         )
         await state.clear()
         return
 
-    # Delete status message and start quiz
-    await status_msg.delete()
     await state.set_state(QuizStates.quiz_in_progress)
     await state.update_data(session_id=session.id)
 
@@ -142,7 +173,7 @@ async def send_current_question(message: Message, session_id: int, db_session: A
     session = await quiz_service.repo.get_session_by_id(session_id)
 
     if not question or not session:
-        await message.answer("Произошла ошибка при загрузке вопроса.")
+        await message.answer("Произошла ошибка при загрузке вопроса.", reply_markup=get_main_keyboard())
         return
 
     # Create options text with A. B. C. D. prefixes
@@ -153,15 +184,6 @@ async def send_current_question(message: Message, session_id: int, db_session: A
         options_lines.append(f"{html.bold(prefix + '.')} {option}")
     options_text = "\n".join(options_lines)
 
-    # Create alphabetical buttons row (A, B, C, D)
-    builder = InlineKeyboardBuilder()
-    row_buttons = []
-    for idx in range(len(question.options)):
-        btn_text = prefixes[idx] if idx < len(prefixes) else f"{idx+1}"
-        row_buttons.append(InlineKeyboardButton(text=btn_text, callback_data=f"quiz_ans:{question.id}:{idx}"))
-    builder.row(*row_buttons)
-    builder.row(InlineKeyboardButton(text="❌ Прервать викторину", callback_data="quiz_cancel"))
-
     quiz_progress = f"Вопрос {session.current_question_index + 1} из {session.total_questions}"
     question_text = (
         f"📋 Тема: {html.code(session.topic)}\n"
@@ -170,26 +192,27 @@ async def send_current_question(message: Message, session_id: int, db_session: A
         f"{options_text}"
     )
 
-    await message.answer(question_text, reply_markup=builder.as_markup())
+    await message.answer(question_text, reply_markup=get_quiz_options_keyboard())
 
-@router.callback_query(QuizStates.quiz_in_progress, F.data.startswith("quiz_ans:"))
-async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
-    data_parts = callback.data.split(":")
-    question_id = int(data_parts[1])
-    option_idx = int(data_parts[2])
-
+@router.message(QuizStates.quiz_in_progress, F.text.in_({"A", "B", "C", "D"}))
+async def handle_answer_message(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
     state_data = await state.get_data()
     session_id = state_data.get("session_id")
 
     if not session_id:
-        await callback.answer("Сессия викторины не найдена.", show_alert=True)
+        await message.answer("Сессия викторины не найдена. Пожалуйста, начните заново.", reply_markup=get_main_keyboard())
+        await state.clear()
         return
+
+    mapping = {"A": 0, "B": 1, "C": 2, "D": 3}
+    option_idx = mapping.get(message.text)
 
     quiz_service = QuizService(db_session)
     res = await quiz_service.submit_answer(session_id, option_idx)
 
     if not res:
-        await callback.answer("Этот ответ устарел или викторина уже пройдена.", show_alert=True)
+        await message.answer("Этот ответ устарел или викторина уже пройдена.", reply_markup=get_main_keyboard())
+        await state.clear()
         return
 
     is_correct, question = res
@@ -222,16 +245,12 @@ async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_
     if question.explanation:
         feedback += f"\n💡 {html.bold('Объяснение:')}\n{question.explanation}"
 
-    # Buttons for next step
-    kb_builder = InlineKeyboardBuilder()
+    # Buttons for next step depending on progress
     if session.is_completed:
-        kb_builder.row(InlineKeyboardButton(text="📊 Показать результаты", callback_data="quiz_finish"))
+        markup = get_finish_keyboard()
     else:
-        kb_builder.row(InlineKeyboardButton(text="➡️ Следующий вопрос", callback_data="quiz_next"))
+        markup = get_next_question_keyboard()
 
-    kb_builder.row(InlineKeyboardButton(text="❌ Прервать викторину", callback_data="quiz_cancel"))
-
-    # Edit the message to show response details
     question_context = (
         f"📋 Тема: {html.code(session.topic)}\n"
         f"❓ {html.bold(question.question_text)}\n\n"
@@ -239,31 +258,27 @@ async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_
         f"{feedback}"
     )
 
-    await callback.message.edit_text(question_context, reply_markup=kb_builder.as_markup())
-    await callback.answer()
+    await message.answer(question_context, reply_markup=markup)
 
-@router.callback_query(QuizStates.quiz_in_progress, F.data == "quiz_next")
-async def handle_next_question(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+@router.message(QuizStates.quiz_in_progress, F.text == "➡️ Следующий вопрос")
+async def handle_next_question(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
     state_data = await state.get_data()
     session_id = state_data.get("session_id")
 
     if not session_id:
-        await callback.message.answer("Сессия викторины не найдена. Пожалуйста, начните заново.")
+        await message.answer("Сессия викторины не найдена. Пожалуйста, начните заново.", reply_markup=get_main_keyboard())
         await state.clear()
         return
 
-    # Delete current message to keep chat clean and send next question
-    await callback.message.delete()
-    await send_current_question(callback.message, session_id, db_session)
-    await callback.answer()
+    await send_current_question(message, session_id, db_session)
 
-@router.callback_query(QuizStates.quiz_in_progress, F.data == "quiz_finish")
-async def handle_quiz_finish(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+@router.message(QuizStates.quiz_in_progress, F.text == "📊 Показать результаты")
+async def handle_quiz_finish(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
     state_data = await state.get_data()
     session_id = state_data.get("session_id")
 
     if not session_id:
-        await callback.message.answer("Сессия викторины не найдена.")
+        await message.answer("Сессия викторины не найдена.", reply_markup=get_main_keyboard())
         await state.clear()
         return
 
@@ -271,7 +286,7 @@ async def handle_quiz_finish(callback: CallbackQuery, state: FSMContext, db_sess
     session = await quiz_service.repo.get_session_by_id(session_id)
 
     if not session:
-        await callback.message.answer("Не удалось загрузить данные викторины.")
+        await message.answer("Не удалось загрузить данные викторины.", reply_markup=get_main_keyboard())
         await state.clear()
         return
 
@@ -289,39 +304,23 @@ async def handle_quiz_finish(callback: CallbackQuery, state: FSMContext, db_sess
         f"🎉 Викторина по теме {html.code(session.topic)} завершена!\n\n"
         f"{html.bold(emoji)}\n"
         f"📊 Правильных ответов: {html.bold(f'{session.score} из {session.total_questions}')} ({pct}%)\n\n"
-        f"Выбери следующее действие:"
+        f"Вы возвращаетесь в главное меню."
     )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎯 Новая викторина", callback_data="start_quiz")],
-        [InlineKeyboardButton(text="⬅️ В главное меню", callback_data="back_to_menu")]
-    ])
-
-    await callback.message.edit_text(finish_text, reply_markup=kb)
+    await message.answer(finish_text, reply_markup=get_main_keyboard())
     await state.clear()
-    await callback.answer()
 
-@router.callback_query(F.data == "quiz_cancel")
-async def handle_quiz_cancel(callback: CallbackQuery, state: FSMContext, db_session: AsyncSession) -> None:
+@router.message(F.text == "❌ Прервать викторину")
+@router.message(F.text == "⬅️ Отмена")
+async def handle_quiz_cancel(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
     state_data = await state.get_data()
     session_id = state_data.get("session_id")
 
     if session_id:
-        # Mark as completed (aborted)
         quiz_service = QuizService(db_session)
         session = await quiz_service.repo.get_session_by_id(session_id)
         if session and not session.is_completed:
             await quiz_service.repo.update_session(session.id, session.current_question_index, session.score, is_completed=True)
 
     await state.clear()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎯 Начать викторину", callback_data="start_quiz"),
-        ],
-        [
-            InlineKeyboardButton(text="📊 Моя статистика", callback_data="show_stats"),
-            InlineKeyboardButton(text="ℹ️ О боте", callback_data="about_bot")
-        ]
-    ])
-    await callback.message.edit_text("Викторина прервана. Вы вернулись в главное меню. 🏠", reply_markup=kb)
-    await callback.answer()
+    await message.answer("Викторина прервана. Вы вернулись в главное меню. 🏠", reply_markup=get_main_keyboard())
