@@ -14,9 +14,36 @@ router = Router()
 
 @router.callback_query(F.data == "start_quiz")
 async def start_quiz_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(QuizStates.waiting_for_topic)
+    await state.set_state(QuizStates.waiting_for_difficulty)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🟢 Легкая", callback_data="difficulty:easy"),
+            InlineKeyboardButton(text="🟡 Средняя", callback_data="difficulty:medium"),
+            InlineKeyboardButton(text="🔴 Сложная", callback_data="difficulty:hard")
+        ],
+        [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_menu")]
+    ])
     await callback.message.edit_text(
-        "📝 Напиши тему, по которой ты хочешь пройти викторину.\n\n"
+        "🎮 Выбери уровень сложности викторины:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+@router.callback_query(QuizStates.waiting_for_difficulty, F.data.startswith("difficulty:"))
+async def handle_difficulty_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    difficulty = callback.data.split(":")[1]
+    await state.update_data(difficulty=difficulty)
+    await state.set_state(QuizStates.waiting_for_topic)
+    
+    diff_titles = {
+        "easy": "Легкая 🟢",
+        "medium": "Средняя 🟡",
+        "hard": "Сложная 🔴"
+    }
+    
+    await callback.message.edit_text(
+        f"Выбранная сложность: {html.bold(diff_titles[difficulty])}\n\n"
+        "📝 Теперь напиши тему, по которой ты хочешь пройти викторину.\n"
         "Например: 'Язык программирования Python', 'История Древнего Рима', 'Вселенная Гарри Поттера' или 'Основы кулинарии'.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Отмена", callback_data="back_to_menu")]
@@ -31,9 +58,19 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
         await message.answer("Тема слишком короткая. Напиши что-нибудь более конкретное.")
         return
 
+    state_data = await state.get_data()
+    difficulty = state_data.get("difficulty", "medium")
+
+    diff_titles = {
+        "easy": "Легкая 🟢",
+        "medium": "Средняя 🟡",
+        "hard": "Сложная 🔴"
+    }
+    diff_label = diff_titles.get(difficulty, "Средняя 🟡")
+
     # Send status message
     status_msg = await message.answer(
-        f"🤖 Генерирую викторину по теме: {html.bold(topic)}...\n"
+        f"🤖 Генерирую викторину по теме: {html.bold(topic)} ({diff_label})...\n"
         "Использую искусственный интеллект. Это может занять около 5-10 секунд. ⏳"
     )
 
@@ -45,12 +82,25 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
         # Update no more than once per 1.5 seconds to respect Telegram rate limits
         if current_time - last_update_time >= 1.5:
             last_update_time = current_time
-            trimmed = accumulated_text[-2500:]  # Keep it within message length limit
-            preview_text = (
-                f"🤖 Генерирую викторину по теме: {html.bold(topic)}...\n\n"
-                f"⏳ {html.bold('Потоковый вывод от ИИ:')}\n"
-                f"{html.pre(trimmed)}"
-            )
+            
+            # Extract questions using regex from partial JSON
+            import re
+            questions = re.findall(r'"question_text"\s*:\s*"((?:[^"\\]|\\.)*)"', accumulated_text)
+            questions = [q.replace('\\"', '"').replace('\\\\', '\\') for q in questions]
+            
+            if questions:
+                list_text = "\n".join([f"{idx+1}. {q}" for idx, q in enumerate(questions)])
+                preview_text = (
+                    f"🤖 Генерирую викторину по теме: {html.bold(topic)} ({diff_label})...\n\n"
+                    f"🧠 {html.bold('Сгенерировано вопросов:')} {len(questions)} из 5\n"
+                    f"{list_text}"
+                )
+            else:
+                preview_text = (
+                    f"🤖 Генерирую викторину по теме: {html.bold(topic)} ({diff_label})...\n\n"
+                    f"⏳ {html.bold('Статус:')} Инициализация и создание вопросов..."
+                )
+                
             try:
                 await status_msg.edit_text(preview_text)
             except Exception:
@@ -58,7 +108,13 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
 
     # Initialize service and generate
     quiz_service = QuizService(db_session)
-    session = await quiz_service.start_quiz_session(message.from_user.id, topic, count=5, on_chunk=on_chunk)
+    session = await quiz_service.start_quiz_session(
+        user_id=message.from_user.id,
+        topic=topic,
+        difficulty=difficulty,
+        count=5,
+        on_chunk=on_chunk
+    )
 
     if not session:
         await status_msg.edit_text(
@@ -89,19 +145,19 @@ async def send_current_question(message: Message, session_id: int, db_session: A
         await message.answer("Произошла ошибка при загрузке вопроса.")
         return
 
-    # Create options text
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    # Create options text with A. B. C. D. prefixes
+    prefixes = ["A", "B", "C", "D"]
     options_lines = []
     for idx, option in enumerate(question.options):
-        prefix = emojis[idx] if idx < len(emojis) else f"{idx+1}."
-        options_lines.append(f"{prefix} {option}")
+        prefix = prefixes[idx] if idx < len(prefixes) else f"{idx+1}"
+        options_lines.append(f"{html.bold(prefix + '.')} {option}")
     options_text = "\n".join(options_lines)
 
-    # Create simple numeric buttons row
+    # Create alphabetical buttons row (A, B, C, D)
     builder = InlineKeyboardBuilder()
     row_buttons = []
     for idx in range(len(question.options)):
-        btn_text = emojis[idx] if idx < len(emojis) else f"{idx+1}"
+        btn_text = prefixes[idx] if idx < len(prefixes) else f"{idx+1}"
         row_buttons.append(InlineKeyboardButton(text=btn_text, callback_data=f"quiz_ans:{question.id}:{idx}"))
     builder.row(*row_buttons)
     builder.row(InlineKeyboardButton(text="❌ Прервать викторину", callback_data="quiz_cancel"))
@@ -140,16 +196,19 @@ async def handle_answer_callback(callback: CallbackQuery, state: FSMContext, db_
     session = await quiz_service.repo.get_session_by_id(session_id)
 
     # Format options text indicating user choice and correct answer
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    prefixes = ["A", "B", "C", "D"]
     options_lines = []
     for idx, option in enumerate(question.options):
-        line = f"{emojis[idx]} {option}"
+        prefix_str = f"{prefixes[idx]}."
+        line = f"{prefix_str} {option}"
         if idx == option_idx and idx == question.correct_option_index:
-            line += f" {html.bold('(Верно! ✅)')}"
+            line = f"🟢 {html.bold(line)} {html.bold('(Верно! ✅)')}"
         elif idx == option_idx:
-            line += f" {html.bold('(Твой ответ ❌)')}"
+            line = f"🔴 {html.bold(line)} {html.bold('(Твой ответ ❌)')}"
         elif idx == question.correct_option_index:
-            line += f" {html.bold('(Правильный ответ ✅)')}"
+            line = f"🟢 {html.bold(line)} {html.bold('(Правильный ответ ✅)')}"
+        else:
+            line = f"⚪️ {line}"
         options_lines.append(line)
     options_text = "\n".join(options_lines)
 

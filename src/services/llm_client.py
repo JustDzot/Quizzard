@@ -16,6 +16,7 @@ class LLMClient:
     async def generate_questions(
         self,
         topic: str,
+        difficulty: str = "medium",
         count: int = 5,
         on_chunk = None
     ) -> list[dict] | None:
@@ -39,7 +40,13 @@ class LLMClient:
             "Ensure the questions are interesting, clear, and written in Russian."
         )
 
-        user_prompt = f"Generate {count} questions for the topic: \"{topic}\"."
+        diff_prompts = {
+            "easy": "простой (лёгкий) уровень сложности. Вопросы должны быть базовыми и понятными для новичков.",
+            "medium": "средний уровень сложности. Вопросы должны требовать хорошего понимания темы.",
+            "hard": "высокий (сложный) уровень сложности. Вопросы должны быть глубокими, детальными и рассчитаны на экспертов."
+        }
+        diff_desc = diff_prompts.get(difficulty, "средний уровень сложности")
+        user_prompt = f"Generate {count} questions for the topic: \"{topic}\". Уровень сложности вопросов: {diff_desc}."
 
         try:
             if on_chunk:
