@@ -15,7 +15,8 @@ class LLMClient:
         self.client = AsyncOpenAI(
             api_key=settings.gonkagate_api_key,
             base_url=settings.gonkagate_base_url,
-            timeout=120.0
+            timeout=120.0,
+            max_retries=0
         )
         self.model = settings.llm_model
 
