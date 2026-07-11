@@ -98,10 +98,14 @@ class LLMClient:
 
                         updater_task = asyncio.create_task(telegram_updater())
                         try:
-                            async for chunk in response:
-                                chunk_text = chunk.choices[0].delta.content or ""
-                                collected_chunks.append(chunk_text)
-                                current_text = "".join(collected_chunks)
+                            async def read_stream():
+                                nonlocal current_text
+                                async for chunk in response:
+                                    chunk_text = chunk.choices[0].delta.content or ""
+                                    collected_chunks.append(chunk_text)
+                                    current_text = "".join(collected_chunks)
+                            
+                            await asyncio.wait_for(read_stream(), timeout=90.0)
                         finally:
                             updater_task.cancel()
                             await asyncio.gather(updater_task, return_exceptions=True)
