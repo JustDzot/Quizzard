@@ -94,6 +94,9 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
         await message.answer("Тема слишком короткая. Напиши что-нибудь более конкретное.")
         return
 
+    # Transition to generating state immediately to prevent user from sending more messages during generation
+    await state.set_state(QuizStates.generating_quiz)
+
     state_data = await state.get_data()
     difficulty = state_data.get("difficulty", "medium")
 
@@ -166,6 +169,10 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
 
     # Show first question
     await send_current_question(message, session.id, db_session)
+
+@router.message(QuizStates.generating_quiz)
+async def generating_quiz_message_handler(message: Message) -> None:
+    await message.answer("⚠️ Пожалуйста, подождите, ваша викторина ещё генерируется! ⏳")
 
 async def send_current_question(message: Message, session_id: int, db_session: AsyncSession) -> None:
     quiz_service = QuizService(db_session)

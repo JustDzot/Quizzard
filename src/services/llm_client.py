@@ -7,7 +7,11 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 class LLMClient:
+    _lock = None
+
     def __init__(self):
+        if LLMClient._lock is None:
+            LLMClient._lock = asyncio.Lock()
         self.client = AsyncOpenAI(
             api_key=settings.gonkagate_api_key,
             base_url=settings.gonkagate_base_url
@@ -53,47 +57,48 @@ class LLMClient:
         retry_delay = 5.0
         content = ""
 
-        for attempt in range(max_retries):
-            try:
-                if on_chunk:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.7,
-                        stream=True
-                    )
-                    collected_chunks = []
-                    async for chunk in response:
-                        chunk_text = chunk.choices[0].delta.content or ""
-                        collected_chunks.append(chunk_text)
-                        await on_chunk("".join(collected_chunks))
-                    content = "".join(collected_chunks).strip()
-                else:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.7,
-                    )
-                    content = response.choices[0].message.content.strip()
-                
-                break  # Success, exit retry loop
-                
-            except RateLimitError as e:
-                if attempt == max_retries - 1:
-                    logger.error(f"Rate limit exceeded on final attempt: {e}")
+        async with self._lock:
+            for attempt in range(max_retries):
+                try:
+                    if on_chunk:
+                        response = await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.7,
+                            stream=True
+                        )
+                        collected_chunks = []
+                        async for chunk in response:
+                            chunk_text = chunk.choices[0].delta.content or ""
+                            collected_chunks.append(chunk_text)
+                            await on_chunk("".join(collected_chunks))
+                        content = "".join(collected_chunks).strip()
+                    else:
+                        response = await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.7,
+                        )
+                        content = response.choices[0].message.content.strip()
+                    
+                    break  # Success, exit retry loop
+                    
+                except RateLimitError as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Rate limit exceeded on final attempt: {e}")
+                        return None
+                    logger.warning(f"Rate limit exceeded (429). Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2.0
+                except Exception as e:
+                    logger.error(f"Error calling LLM API: {e}")
                     return None
-                logger.warning(f"Rate limit exceeded (429). Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
-                await asyncio.sleep(retry_delay)
-                retry_delay *= 2.0
-            except Exception as e:
-                logger.error(f"Error calling LLM API: {e}")
-                return None
 
         try:
             # Clean possible markdown wrapping
