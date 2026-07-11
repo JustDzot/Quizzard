@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     
     admin_chat_id: int | None = None
+    logs_bot_token: str | None = None
     log_file: str = "bot_logs.txt"
 
     model_config = SettingsConfigDict(

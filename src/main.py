@@ -29,41 +29,49 @@ class TelegramLoggingHandler(logging.Handler):
                 # Schedule message sending in the active asyncio event loop
                 loop.create_task(self.bot.send_message(
                     chat_id=self.chat_id,
-                    text=f"⚠️ <b>Системный лог:</b>\n<pre>{log_entry}</pre>"
+                    text=f"📋 <b>Лог бота:</b>\n<pre>{log_entry}</pre>"
                 ))
         except Exception:
             pass
 
 async def main() -> None:
-    # Инициализация логирования с выводом в консоль и в файл
-    log_handlers = [
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(settings.log_file, encoding="utf-8")
-    ]
+    # Инициализация корневого логгера
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=log_handlers
-    )
+    # Форматтер для логов
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    
+    # Вывод в консоль (sys.stdout) - пишет всё (уровень LOG_LEVEL)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)
+    
+    # Запись в файл - пишет только WARNING и выше
+    file_handler = logging.FileHandler(settings.log_file, encoding="utf-8")
+    file_handler.setLevel(logging.WARNING)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
     
     logger = logging.getLogger(__name__)
     logger.info("Starting Quizzard bot...")
 
-    # Инициализация бота и диспетчера
+    # Инициализация основного бота и диспетчера
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
     dp = Dispatcher()
 
-    # Подключение логгера для Telegram, если указан ID администратора
-    if settings.admin_chat_id:
-        tg_handler = TelegramLoggingHandler(bot, settings.admin_chat_id)
-        tg_handler.setLevel(logging.WARNING)  # Отправляем только WARNING и ERROR
-        tg_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        logging.getLogger().addHandler(tg_handler)
-        logger.info(f"Telegram logger initialized for admin chat: {settings.admin_chat_id}")
+    # Подключение логгера для Telegram через отдельного бота (пишет всё от уровня INFO и выше)
+    logs_bot = None
+    if settings.logs_bot_token and settings.admin_chat_id:
+        logs_bot = Bot(token=settings.logs_bot_token)
+        tg_handler = TelegramLoggingHandler(logs_bot, settings.admin_chat_id)
+        tg_handler.setLevel(logging.INFO)  # Пересылает все логи (INFO, WARNING, ERROR)
+        tg_handler.setFormatter(formatter)
+        root_logger.addHandler(tg_handler)
+        logger.info(f"Telegram logs bot initialized for admin chat: {settings.admin_chat_id}")
 
     # Подключение Middleware для инъекции сессии БД
     dp.update.outer_middleware(DbSessionMiddleware(async_session))
@@ -77,6 +85,8 @@ async def main() -> None:
         await dp.start_polling(bot)
     finally:
         await bot.session.close()
+        if logs_bot:
+            await logs_bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
