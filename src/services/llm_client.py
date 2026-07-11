@@ -1,4 +1,5 @@
 import asyncio
+import httpx
 import json
 import logging
 from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIConnectionError
@@ -118,7 +119,7 @@ class LLMClient:
                     
                     break  # Success, exit retry loop
                     
-                except (RateLimitError, APITimeoutError, APIConnectionError) as e:
+                except (RateLimitError, APITimeoutError, APIConnectionError, httpx.TimeoutException, asyncio.TimeoutError) as e:
                     if attempt == max_retries - 1:
                         logger.error(f"Transient LLM API error on final attempt: {e}")
                         return None
