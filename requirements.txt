@@ -1,0 +1,9 @@
+aiogram
+sqlalchemy
+asyncpg
+alembic
+pydantic-settings
+python-dotenv
+openai
+apscheduler
+psycopg2-binary
