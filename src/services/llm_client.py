@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from openai import AsyncOpenAI, RateLimitError
+from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIConnectionError
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,8 @@ class LLMClient:
             LLMClient._lock = asyncio.Lock()
         self.client = AsyncOpenAI(
             api_key=settings.gonkagate_api_key,
-            base_url=settings.gonkagate_base_url
+            base_url=settings.gonkagate_base_url,
+            timeout=120.0
         )
         self.model = settings.llm_model
 
@@ -89,15 +90,15 @@ class LLMClient:
                     
                     break  # Success, exit retry loop
                     
-                except RateLimitError as e:
+                except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                     if attempt == max_retries - 1:
-                        logger.error(f"Rate limit exceeded on final attempt: {e}")
+                        logger.error(f"Transient LLM API error on final attempt: {e}")
                         return None
-                    logger.warning(f"Rate limit exceeded (429). Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
+                    logger.warning(f"Transient LLM API error: {e}. Retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...")
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2.0
                 except Exception as e:
-                    logger.error(f"Error calling LLM API: {e}")
+                    logger.error(f"Fatal error calling LLM API: {e}")
                     return None
 
         try:
