@@ -1,9 +1,11 @@
+import logging
 from aiogram import Router, html, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.services.user_service import UserService
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
@@ -17,6 +19,7 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
 @router.message(F.text == "⬅️ В главное меню")
 @router.message(F.text == "⬅️ Отмена")
 async def start_handler(message: Message, db_session: AsyncSession) -> None:
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) accessed main menu via: {message.text or '/start'}")
     user_service = UserService(db_session)
     await user_service.get_or_create_user(
         user_id=message.from_user.id,
@@ -35,6 +38,7 @@ async def start_handler(message: Message, db_session: AsyncSession) -> None:
 
 @router.message(F.text == "ℹ️ О боте")
 async def about_bot_handler(message: Message) -> None:
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) viewed 'About Bot'")
     text = (
         f"ℹ️ {html.bold('О боте Quizzard')}\n\n"
         f"Этот бот — твой персональный генератор умных викторин! "

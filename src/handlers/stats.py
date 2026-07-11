@@ -1,9 +1,11 @@
+import logging
 from aiogram import Router, html, F
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.database.repositories import QuizRepository
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
@@ -34,5 +36,6 @@ async def get_stats_message(user_id: int, first_name: str, db_session: AsyncSess
 @router.message(Command("stats"))
 @router.message(F.text == "📊 Моя статистика")
 async def stats_handler(message: Message, db_session: AsyncSession) -> None:
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) requested stats")
     text = await get_stats_message(message.from_user.id, message.from_user.first_name, db_session)
     await message.answer(text, reply_markup=get_main_keyboard())

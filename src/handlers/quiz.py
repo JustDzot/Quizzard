@@ -57,6 +57,7 @@ def get_finish_keyboard() -> ReplyKeyboardMarkup:
 
 @router.message(F.text == "🎯 Начать викторину")
 async def start_quiz_message_handler(message: Message, state: FSMContext) -> None:
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) clicked 'Start Quiz'")
     await state.set_state(QuizStates.waiting_for_difficulty)
     await message.answer(
         "🎮 Выбери уровень сложности викторины:",
@@ -66,6 +67,7 @@ async def start_quiz_message_handler(message: Message, state: FSMContext) -> Non
 @router.message(QuizStates.waiting_for_difficulty, F.text.in_({"🟢 Легкая", "🟡 Средняя", "🔴 Сложная"}))
 async def difficulty_received_handler(message: Message, state: FSMContext) -> None:
     text = message.text
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) selected difficulty: {text}")
     mapping = {
         "🟢 Легкая": "easy",
         "🟡 Средняя": "medium",
@@ -85,6 +87,7 @@ async def difficulty_received_handler(message: Message, state: FSMContext) -> No
 @router.message(QuizStates.waiting_for_topic)
 async def topic_received_handler(message: Message, state: FSMContext, db_session: AsyncSession) -> None:
     if message.text == "⬅️ Отмена":
+        logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) canceled topic prompt.")
         await state.clear()
         await message.answer("Отменено.", reply_markup=get_main_keyboard())
         return
@@ -99,6 +102,7 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
 
     state_data = await state.get_data()
     difficulty = state_data.get("difficulty", "medium")
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) requested quiz with topic: '{topic}' (difficulty: {difficulty})")
 
     diff_titles = {
         "easy": "Легкая 🟢",
@@ -156,6 +160,7 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
     )
 
     if not session:
+        logger.warning(f"Failed to generate quiz for User {message.from_user.id} with topic '{topic}'")
         await message.answer(
             "❌ Не удалось сгенерировать викторину. \n"
             "Возможно, тема некорректна или возникли проблемы с API. Попробуй другую тему.",
@@ -164,6 +169,7 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
         await state.clear()
         return
 
+    logger.info(f"Quiz successfully generated for User {message.from_user.id} with topic '{topic}'. Session ID: {session.id}")
     await state.set_state(QuizStates.quiz_in_progress)
     await state.update_data(session_id=session.id)
 
@@ -172,6 +178,7 @@ async def topic_received_handler(message: Message, state: FSMContext, db_session
 
 @router.message(QuizStates.generating_quiz)
 async def generating_quiz_message_handler(message: Message) -> None:
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) sent message '{message.text}' while quiz generation was in progress. Ignored.")
     await message.answer("⚠️ Пожалуйста, подождите, ваша викторина ещё генерируется! ⏳")
 
 async def send_current_question(message: Message, session_id: int, db_session: AsyncSession) -> None:
@@ -224,6 +231,12 @@ async def handle_answer_message(message: Message, state: FSMContext, db_session:
 
     is_correct, question = res
     session = await quiz_service.repo.get_session_by_id(session_id)
+    
+    logger.info(
+        f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) answered '{message.text}' "
+        f"(option index {option_idx}) in Session ID {session_id}. Correct: {is_correct}. "
+        f"(Progress: {session.current_question_index}/{session.total_questions}, Score: {session.score})"
+    )
 
     # Format options text indicating user choice and correct answer
     prefixes = ["A", "B", "C", "D"]
@@ -277,6 +290,7 @@ async def handle_next_question(message: Message, state: FSMContext, db_session: 
         await state.clear()
         return
 
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) requested next question for Session ID {session_id}")
     await send_current_question(message, session_id, db_session)
 
 @router.message(QuizStates.quiz_in_progress, F.text == "📊 Показать результаты")
@@ -298,6 +312,7 @@ async def handle_quiz_finish(message: Message, state: FSMContext, db_session: As
         return
 
     pct = round((session.score / session.total_questions) * 100) if session.total_questions > 0 else 0
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) finished quiz. Final score: {session.score}/{session.total_questions} ({pct}%) for Session ID {session_id}")
     
     emoji = "🏆"
     if pct >= 80:
@@ -323,6 +338,7 @@ async def handle_quiz_cancel(message: Message, state: FSMContext, db_session: As
     state_data = await state.get_data()
     session_id = state_data.get("session_id")
 
+    logger.info(f"User {message.from_user.id} (@{message.from_user.username or 'no_username'}) canceled/aborted the quiz (Session ID: {session_id})")
     if session_id:
         quiz_service = QuizService(db_session)
         session = await quiz_service.repo.get_session_by_id(session_id)
