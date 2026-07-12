@@ -28,9 +28,10 @@ async def get_profile_message(user_id: int, first_name: str, db_session: AsyncSe
     if sp_stats["total_quizzes"] == 0:
         sp_text = "Нет сыгранных игр 🤷‍♂️"
     else:
+        correct_rate = sp_stats["correct_rate"]
         sp_text = (
             f"Завершено викторин: {html.bold(sp_stats['total_quizzes'])}\n"
-            f"• Точность: {html.bold(f'{sp_stats[\"correct_rate\"]}%')} ({sp_stats['total_score']} / {sp_stats['total_questions']})"
+            f"• Точность: {html.bold(f'{correct_rate}%')} ({sp_stats['total_score']} / {sp_stats['total_questions']})"
         )
     
     # Format multiplayer stats
