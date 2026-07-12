@@ -1,6 +1,6 @@
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.database.models import User, QuizSession, Question
+from src.database.models import User, QuizSession, Question, MultiplayerGame, MultiplayerQuestion
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
