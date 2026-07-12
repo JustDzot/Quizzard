@@ -62,4 +62,13 @@ class QuizService:
         is_completed = (next_idx >= len(questions))
 
         await self.repo.update_session(session.id, next_idx, new_score, is_completed)
+
+        # Award XP
+        from src.database.repositories import UserRepository
+        user_repo = UserRepository(self.repo.session)
+        if is_correct:
+            await user_repo.add_xp(session.user_id, 10)
+        if is_completed:
+            await user_repo.add_xp(session.user_id, 15)
+
         return is_correct, question

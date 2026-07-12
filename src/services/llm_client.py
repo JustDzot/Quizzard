@@ -171,3 +171,39 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Error parsing questions from LLM response: {e}")
             return None
+
+    async def generate_duel_categories(self) -> list[str]:
+        """
+        Generates 3 diverse quiz categories/topics in Russian for 1v1 duels.
+        """
+        system_prompt = (
+            "You are a quiz master. Generate exactly 3 diverse, interesting, and engaging quiz categories/topics "
+            "for a multiplayer 1v1 trivia duel. The topics should be general enough for most players but interesting "
+            "(e.g., 'История космонавтики', 'Мировое кино', 'География островов', 'Технологии').\n"
+            "You MUST respond ONLY with a raw JSON array of 3 strings. Do not include markdown or backticks."
+        )
+        user_prompt = "Generate 3 random diverse trivia categories in Russian."
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.8,
+            )
+            content = response.choices[0].message.content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            categories = json.loads(content)
+            if isinstance(categories, list) and len(categories) == 3:
+                return [str(c).strip() for c in categories]
+        except Exception as e:
+            logger.error(f"Error generating duel categories: {e}")
+            
+        return ["Кинематограф 🎬", "География мира 🌍", "История и мифы 🏛"]

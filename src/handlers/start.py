@@ -10,8 +10,8 @@ router = Router()
 
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🎯 Начать викторину")],
-        [KeyboardButton(text="📊 Моя статистика"), KeyboardButton(text="ℹ️ О боте")]
+        [KeyboardButton(text="🎯 Начать викторину"), KeyboardButton(text="👥 Найти соперника (Дуэль)")],
+        [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="ℹ️ О боте")]
     ], resize_keyboard=True)
 
 @router.message(CommandStart())
@@ -30,7 +30,8 @@ async def start_handler(message: Message, db_session: AsyncSession) -> None:
     welcome_text = (
         f"Привет, {html.bold(message.from_user.full_name)}! 👋\n\n"
         f"Я — бот-викторина {html.bold('Quizzard')}. Я могу сгенерировать для тебя "
-        f"вопросы на совершенно любую тему с помощью искусственного интеллекта! 🧠✨\n\n"
+        f"вопросы на любую тему с помощью ИИ! 🧠✨\n\n"
+        f"🎮 Играй в одиночку или соревнуйся с другими в режиме {html.bold('«Рулетка категорий»')}! ⚔️\n\n"
         f"Выбери действие на клавиатуре ниже:"
     )
 
